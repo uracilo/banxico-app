@@ -1,0 +1,37 @@
+name: Deploy (Self-hosted + docker-compose + prod env)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    environment: prod
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create .env from prod secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "BANXICO_TOKEN=${{ secrets.BANXICO_TOKEN }}";
+          } > .env
+          chmod 600 .env
+
+      - name: Build & Up with docker-compose
+        shell: bash
+        run: |
+          set -e
+          docker-compose down --remove-orphans || true
+          docker-compose up -d --build
+          docker-compose ps
+          docker logs --tail 50 banxico-app || true
