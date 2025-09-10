@@ -1,0 +1,10 @@
+version: "3.9"
+
+services:
+  banxico-app:
+    build: .
+    container_name: banxico_app
+    ports:
+      - "8501:8501"
+    environment:
+      - BANXICO_TOKEN=${BANXICO_TOKEN}
