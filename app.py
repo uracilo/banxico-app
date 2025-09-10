@@ -50,10 +50,9 @@ st.markdown(f"""
 BASE = "https://www.banxico.org.mx/SieAPIRest/service/v1"
 SERIE_USD_MXN_FIX = "SF43718"
 
-TOKEN = st.secrets.get("BANXICO_TOKEN", os.getenv("BANXICO_TOKEN", "")).strip()
+TOKEN = os.getenv("BANXICO_TOKEN", "").strip()
 if not TOKEN:
-    st.error("Banxico token missing. Set it in `.streamlit/secrets.toml` or as env var `BANXICO_TOKEN`.")
-    st.stop()
+    st.error("BANXICO_TOKEN not set")
 
 HEADERS = {"Bmx-Token": TOKEN}
 
