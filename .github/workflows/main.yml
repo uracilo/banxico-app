@@ -32,6 +32,6 @@ jobs:
         run: |
           set -e
           docker-compose down --remove-orphans || true
-          docker-compose up -d --build
+          docker-compose --env-file .env up -d --build
           docker-compose ps
           docker logs --tail 50 banxico-app || true
