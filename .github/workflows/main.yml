@@ -46,5 +46,6 @@ jobs:
           sudo docker compose --env-file .env up -d --build
           echo "Containers status:"
           sudo docker compose ps
-          echo "Recent logs from banxico-app:"
-          sudo docker logs --tail 50 banxico-app
+          echo "Recent logs from banxico_app:"
+          sudo docker logs --tail 50 banxico_app
+
