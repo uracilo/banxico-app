@@ -1,5 +1,6 @@
 # 💵 Banxico USD/MXN Exchange Streamlit App
 
+
 A **Streamlit** application that queries the **Banxico API** to display:
 
 1. Current FIX exchange rate (USD → MXN).  
