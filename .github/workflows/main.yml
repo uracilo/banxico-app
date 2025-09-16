@@ -11,12 +11,21 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: self-hosted
+    runs-on: [self-hosted] 
     environment: prod
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify runner & Docker installation
+        run: |
+          echo "Runner name: $RUNNER_NAME"
+          echo "Runner OS: $RUNNER_OS"
+          echo "Runner Arch: $RUNNER_ARCH"
+          which docker || echo "docker not found"
+          docker --version || echo "docker not available"
+          docker compose version || echo "docker compose not available"
 
       - name: Create .env from prod secrets
         shell: bash
@@ -31,7 +40,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          sudo docker compose down --remove-orphans || true
+          echo "Shutting down old containers (if any)..."
+          sudo docker compose down --remove-orphans
+          echo "Starting containers with build..."
           sudo docker compose --env-file .env up -d --build
+          echo "Containers status:"
           sudo docker compose ps
-          sudo docker logs --tail 50 banxico-app || true
+          echo "Recent logs from banxico-app:"
+          sudo docker logs --tail 50 banxico-app
