@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SLA · SLO · SLI Dashboard</title>
+  <!-- Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <style>
+    body { background: #0b1220; color: #e9eef7; }
+    .card { background: #111b2e; border: 1px solid #1b2a4a; }
+    .form-label { color: #bcd0ff; }
+    .muted { color: #8aa0c8; }
+    .metric { font-size: 1.6rem; font-weight: 700; }
+    .small-label { font-size: .8rem; color: #8aa0c8; }
+    .progress { height: 10px; }
+    .table-dark th, .table-dark td { vertical-align: middle; }
+    a, a:hover { color: #bcd0ff; }
+    .badge-ok { background: #1f8b4c; }
+    .badge-bad { background: #b14e5f; }
+    .blink { animation: blink 1.2s linear infinite; }
+    @keyframes blink { 50% { opacity: .4; } }
+  </style>
+</head>
+<body>
+  <div class="container py-4">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <h1 class="h3 m-0">SLA · SLO · SLI Dashboard</h1>
+      <span class="small-label">Single-file · Client-side only</span>
+    </div>
+
+    <!-- Controls -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <form id="controlForm" class="row g-3 align-items-end">
+          <div class="col-md-5">
+            <label class="form-label" for="targetUrl">Target URL or IP</label>
+            <input class="form-control" id="targetUrl" placeholder="http://<ElasticIP>/ or https://domain" />
+            <div class="form-text muted">For your CloudFormation output, start with <code>http://&lt;ElasticIP&gt;/</code>. Optionally specify a health path below.</div>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="healthPath">Health path</label>
+            <input class="form-control" id="healthPath" placeholder="/" value="/" />
+            <div class="form-text muted">Expose a CORS-enabled <code>/health</code> JSON if possible.</div>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label" for="intervalMs">Probe interval (ms)</label>
+            <input type="number" min="500" step="100" class="form-control" id="intervalMs" value="5000" />
+          </div>
+          <div class="col-md-2">
+            <label class="form-label" for="timeoutMs">Timeout (ms)</label>
+            <input type="number" min="500" step="100" class="form-control" id="timeoutMs" value="4000" />
+          </div>
+
+          <div class="col-12">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="expectCors" checked>
+              <label class="form-check-label" for="expectCors">Expect CORS (use <code>fetch</code>). If disabled, uses image-probe fallback (less precise).</label>
+            </div>
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label" for="targetAvail">SLO: Availability %</label>
+            <input type="number" min="90" max="100" step="0.001" class="form-control" id="targetAvail" value="99.9" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="targetP95">SLO: p95 latency (ms)</label>
+            <input type="number" min="1" step="1" class="form-control" id="targetP95" value="500" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label" for="windowSize">SLI window (samples)</label>
+            <input type="number" min="10" step="10" class="form-control" id="windowSize" value="300" />
+            <div class="form-text muted">e.g., 300 samples @ 5s ≈ 25 minutes rolling window.</div>
+          </div>
+          <div class="col-md-3 text-end">
+            <button id="startBtn" type="button" class="btn btn-success me-2">Start</button>
+            <button id="stopBtn" type="button" class="btn btn-outline-light me-2" disabled>Stop</button>
+            <button id="resetBtn" type="button" class="btn btn-outline-warning">Reset</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="row g-3">
+      <div class="col-md-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="small-label">Current status</div>
+            <div id="currentStatus" class="metric">—</div>
+            <div class="small-label">Last probe <span id="lastProbeAt" class="muted">—</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="small-label">Availability SLI</div>
+            <div class="metric"><span id="availPct">0.00</span>% <span id="availBadge" class="badge ms-2">—</span></div>
+            <div class="progress mt-2"><div id="availBar" class="progress-bar" role="progressbar" style="width:0%"></div></div>
+            <div class="small-label">Errors / Total: <span id="errTotal">0</span>/<span id="probeTotal">0</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="small-label">Latency SLI (ms)</div>
+            <div class="metric">p50 <span id="p50">—</span> · p95 <span id="p95">—</span> <span id="latBadge" class="badge ms-2">—</span></div>
+            <div class="small-label">Successful samples: <span id="latSamples">0</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card h-100">
+          <div class="card-body">
+            <div class="small-label">Error budget (rolling)</div>
+            <div class="metric"><span id="budgetRemain">—</span></div>
+            <div class="progress mt-2"><div id="budgetBar" class="progress-bar bg-danger" role="progressbar" style="width:0%"></div></div>
+            <div class="small-label">Allowed errors: <span id="allowedErrors">0</span> · Used: <span id="usedErrors">0</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Definitions -->
+    <div class="card mt-3">
+      <div class="card-body">
+        <h2 class="h5">Definitions (quick reference)</h2>
+        <ul class="mb-2">
+          <li><strong>SLI</strong> (Service Level Indicator): a measurement. Here we compute request <em>availability</em> (success rate) and <em>latency percentiles</em> over a rolling window.</li>
+          <li><strong>SLO</strong> (Service Level Objective): a target for an SLI (e.g., Availability ≥ 99.90% and p95 latency ≤ 500 ms).</li>
+          <li><strong>Error Budget</strong>: the permissible unreliability for a period. For a target of 99.9%, the budget is 0.1% of requests/time within the window.</li>
+        </ul>
+        <div class="muted">Infra context: single EC2 instance with Elastic IP in a public subnet (HTTP/80 open). Consider multi-AZ or ALB + ASG for stronger SLOs; with one instance, maintenance & failures directly consume budget.</div>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card mt-3">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <h2 class="h6 m-0">Recent probes</h2>
+          <div>
+            <button id="exportCsv" class="btn btn-sm btn-outline-info me-2">Export CSV</button>
+            <span class="small-label">Window keeps last <span id="winSizeLabel">300</span> samples.</span>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-dark table-striped table-sm align-middle" id="probeTable">
+            <thead>
+              <tr><th>#</th><th>Timestamp</th><th>Status</th><th>Latency (ms)</th><th>Mode</th><th>Note</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <footer class="mt-4 text-center small muted">Tip: To avoid CORS, host this file on the same origin as the target or expose a CORS-enabled <code>/health</code> endpoint.</footer>
+  </div>
+
+  <script>
+    // --- State ---
+    const state = {
+      timer: null,
+      samples: [], // {ts, ok, latency, mode, note}
+    };
+
+    // --- Helpers ---
+    function nowISO() { return new Date().toISOString(); }
+    function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
+    function percentile(arr, p) {
+      if (!arr.length) return null;
+      const sorted = [...arr].sort((a,b)=>a-b);
+      const idx = (p/100) * (sorted.length - 1);
+      const lo = Math.floor(idx), hi = Math.ceil(idx);
+      if (lo === hi) return sorted[lo];
+      const w = idx - lo; return sorted[lo] * (1-w) + sorted[hi] * w;
+    }
+    function updateBadge(el, good) {
+      el.textContent = good ? 'On target' : 'Out of SLO';
+      el.className = 'badge ' + (good ? 'badge-ok' : 'badge-bad');
+    }
+
+    function updateUI() {
+      const total = state.samples.length;
+      const errors = state.samples.filter(s => !s.ok).length;
+      const successes = total - errors;
+      const avail = total ? ((successes/total)*100) : 0;
+      const lats = state.samples.filter(s=>s.ok && typeof s.latency==='number').map(s=>s.latency);
+      const p50 = percentile(lats, 50);
+      const p95 = percentile(lats, 95);
+
+      const targetAvail = parseFloat(document.getElementById('targetAvail').value || '99.9');
+      const targetP95 = parseFloat(document.getElementById('targetP95').value || '500');
+
+      // Availability card
+      document.getElementById('availPct').textContent = avail.toFixed(2);
+      document.getElementById('probeTotal').textContent = total;
+      document.getElementById('errTotal').textContent = errors;
+      document.getElementById('availBar').style.width = clamp(avail,0,100) + '%';
+      updateBadge(document.getElementById('availBadge'), avail >= targetAvail);
+
+      // Latency card
+      document.getElementById('p50').textContent = p50!=null ? Math.round(p50) : '—';
+      document.getElementById('p95').textContent = p95!=null ? Math.round(p95) : '—';
+      document.getElementById('latSamples').textContent = lats.length;
+      const latOk = p95!=null ? (p95 <= targetP95) : false;
+      updateBadge(document.getElementById('latBadge'), latOk);
+
+      // Error budget (request-scoped approximation over the rolling window)
+      const allowedErrors = Math.floor(total * (1 - (targetAvail/100)));
+      const usedErrors = errors;
+      const remain = Math.max(0, allowedErrors - usedErrors);
+      const remainPct = allowedErrors>0 ? clamp((remain/allowedErrors)*100, 0, 100) : 100;
+      document.getElementById('allowedErrors').textContent = allowedErrors;
+      document.getElementById('usedErrors').textContent = usedErrors;
+      document.getElementById('budgetRemain').textContent = allowedErrors ? `${remain}/${allowedErrors}` : '—';
+      document.getElementById('budgetBar').style.width = (100 - remainPct) + '%';
+
+      document.getElementById('winSizeLabel').textContent = document.getElementById('windowSize').value;
+    }
+
+    function addRow(sample) {
+      const tbody = document.querySelector('#probeTable tbody');
+      const tr = document.createElement('tr');
+      const idx = state.samples.length;
+      tr.innerHTML = `
+        <td class="text-muted">${idx}</td>
+        <td><code>${sample.ts}</code></td>
+        <td>${sample.ok ? '<span class="badge bg-success">OK</span>' : '<span class="badge bg-danger">FAIL</span>'}</td>
+        <td>${sample.latency!=null ? Math.round(sample.latency) : '—'}</td>
+        <td><span class="badge bg-secondary">${sample.mode}</span></td>
+        <td class="text-wrap">${sample.note || ''}</td>
+      `;
+      tbody.prepend(tr); // newest on top
+    }
+
+    function trimWindow() {
+      const win = parseInt(document.getElementById('windowSize').value || '300', 10);
+      if (state.samples.length > win) {
+        state.samples = state.samples.slice(state.samples.length - win);
+        // Rebuild table for simplicity
+        const tbody = document.querySelector('#probeTable tbody');
+        tbody.innerHTML = '';
+        state.samples.forEach(s => addRow(s));
+      }
+    }
+
+    function setStatus(text, active) {
+      const el = document.getElementById('currentStatus');
+      el.textContent = text;
+      el.classList.toggle('blink', !!active);
+    }
+
+    async function probeOnce() {
+      const base = (document.getElementById('targetUrl').value || '').trim();
+      const path = (document.getElementById('healthPath').value || '/').trim();
+      const url = new URL(path, base).toString();
+      const timeoutMs = parseInt(document.getElementById('timeoutMs').value, 10);
+      const expectCors = document.getElementById('expectCors').checked;
+
+      const started = performance.now();
+      let done = false;
+      let ok = false; let latency = null; let note = '';
+      let mode = expectCors ? 'fetch' : 'img';
+
+      const setLast = () => {
+        document.getElementById('lastProbeAt').textContent = new Date().toLocaleString();
+      };
+
+      const timeout = new Promise((resolve) => {
+        setTimeout(() => { if (!done) resolve({ ok:false, latency:null, note:'Timeout' }); }, timeoutMs);
+      });
+
+      async function fetchMode() {
+        try {
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), timeoutMs);
+          const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: controller.signal });
+          clearTimeout(t);
+          const end = performance.now();
+          const lt = end - started;
+          const success = res.ok; // requires CORS to read
+          const n = `status=${res.status}`;
+          return { ok: success, latency: lt, note: n };
+        } catch (e) {
+          const end = performance.now();
+          return { ok:false, latency: end - started, note: (e.name || 'Error') };
+        }
+      }
+
+      function imgMode() {
+        return new Promise(resolve => {
+          const img = new Image();
+          const t = setTimeout(() => { img.src = ''; resolve({ ok:false, latency:null, note:'Timeout' }); }, timeoutMs);
+          const st = performance.now();
+          img.onload = () => { clearTimeout(t); resolve({ ok:true, latency: performance.now()-st, note:'img onload' }); };
+          img.onerror = () => { clearTimeout(t); resolve({ ok:false, latency: performance.now()-st, note:'img onerror' }); };
+          // cache-buster
+          img.src = url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+        });
+      }
+
+      const result = await Promise.race([ expectCors ? fetchMode() : imgMode(), timeout ]);
+      done = true;
+      ok = !!result.ok; latency = result.latency; note = result.note;
+
+      const sample = { ts: nowISO(), ok, latency, mode, note };
+      state.samples.push(sample);
+      addRow(sample);
+      trimWindow();
+      updateUI();
+      setLast();
+      setStatus(ok ? 'Healthy' : 'Unhealthy', false);
+    }
+
+    function startProbing() {
+      if (state.timer) return;
+      const base = (document.getElementById('targetUrl').value || '').trim();
+      if (!base) { alert('Please enter a Target URL or IP first.'); return; }
+      const interval = parseInt(document.getElementById('intervalMs').value, 10);
+      setStatus('Probing…', true);
+      probeOnce();
+      state.timer = setInterval(probeOnce, interval);
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('stopBtn').disabled = false;
+    }
+
+    function stopProbing() {
+      if (state.timer) { clearInterval(state.timer); state.timer = null; }
+      setStatus('Stopped', false);
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+    }
+
+    function resetAll() {
+      stopProbing();
+      state.samples = [];
+      document.querySelector('#probeTable tbody').innerHTML = '';
+      document.getElementById('lastProbeAt').textContent = '—';
+      updateUI();
+      setStatus('Idle', false);
+    }
+
+    function exportCSV() {
+      const rows = [['ts','ok','latency_ms','mode','note']]
+        .concat(state.samples.map(s=>[s.ts, s.ok?1:0, s.latency!=null?Math.round(s.latency):'', s.mode, (s.note||'').replaceAll('\n',' ')]));
+      const csv = rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'sla_slo_sli_probes.csv'; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Event wiring
+    document.getElementById('startBtn').addEventListener('click', startProbing);
+    document.getElementById('stopBtn').addEventListener('click', stopProbing);
+    document.getElementById('resetBtn').addEventListener('click', resetAll);
+    document.getElementById('exportCsv').addEventListener('click', exportCSV);
+
+    // Initialize
+    setStatus('Idle', false);
+    updateUI();
+  </script>
+</body>
+</html>
