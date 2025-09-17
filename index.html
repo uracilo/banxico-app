@@ -41,7 +41,7 @@
           <div class="col-md-3">
             <label class="form-label" for="healthPath">Health path</label>
             <input class="form-control" id="healthPath" placeholder="/health or /" value="/" />
-            <div class="form-text muted">Expose a CORS-enabled <code>/health</code> JSON if possible. Otherwise the app will try fallbacks automatically.</div>
+            <div class="form-text muted">Expose a CORS-enabled <code>/health</code> JSON if possible. Otherwise, the app will attempt fallbacks automatically.</div>
           </div>
           <div class="col-md-2">
             <label class="form-label" for="intervalMs">Probe interval (ms)</label>
@@ -55,14 +55,14 @@
           <div class="col-12">
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" id="expectCors" checked>
-              <label class="form-check-label" for="expectCors">Prefer CORS (direct <code>fetch</code>). If disabled, starts from image-probe fallback.</label>
+              <label class="form-check-label" for="expectCors">Prefer CORS (direct <code>fetch</code>). If disabled, it will start with image-probe fallback.</label>
             </div>
           </div>
 
           <div class="col-md-6">
-            <label class="form-label" for="customFetches">Custom fetch paths (comma‑separated)</label>
+            <label class="form-label" for="customFetches">Custom fetch paths (comma-separated)</label>
             <input class="form-control" id="customFetches" value="/?format=html, /" />
-            <div class="form-text muted">Se intentan en orden antes de otras estrategias. Ideal para Streamlit (root HTML).</div>
+            <div class="form-text muted">Tried in order before other strategies. Ideal for Streamlit (root HTML).</div>
           </div>
 
           <div class="col-md-4">
@@ -73,7 +73,7 @@
               </div>
               <input class="form-control" id="proxyBase" value="https://api.allorigins.win/raw?url=" />
             </div>
-            <div class="form-text muted">Proxy añade CORS y puede atravesar bloqueos, pero su latencia incluye hop extra.</div>
+            <div class="form-text muted">Proxy adds CORS and can bypass blocks, but latency includes an extra hop.</div>
           </div>
 
           <div class="col-md-2">
@@ -177,6 +177,8 @@
 
     <footer class="mt-4 text-center small muted">Tip: To avoid CORS, host this file on the same origin as the target or expose a CORS-enabled <code>/health</code> endpoint.</footer>
   </div>
+
+  <!-- JS stays the same -->
 
   <script>
     // --- State ---
