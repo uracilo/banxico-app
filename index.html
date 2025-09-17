@@ -40,8 +40,8 @@
           </div>
           <div class="col-md-3">
             <label class="form-label" for="healthPath">Health path</label>
-            <input class="form-control" id="healthPath" placeholder="/" value="/" />
-            <div class="form-text muted">Expose a CORS-enabled <code>/health</code> JSON if possible.</div>
+            <input class="form-control" id="healthPath" placeholder="/health or /" value="/" />
+            <div class="form-text muted">Expose a CORS-enabled <code>/health</code> JSON if possible. Otherwise the app will try fallbacks automatically.</div>
           </div>
           <div class="col-md-2">
             <label class="form-label" for="intervalMs">Probe interval (ms)</label>
@@ -55,24 +55,35 @@
           <div class="col-12">
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" id="expectCors" checked>
-              <label class="form-check-label" for="expectCors">Expect CORS (use <code>fetch</code>). If disabled, uses image-probe fallback (less precise).</label>
+              <label class="form-check-label" for="expectCors">Prefer CORS (direct <code>fetch</code>). If disabled, starts from image-probe fallback.</label>
             </div>
           </div>
 
-          <div class="col-md-3">
+          <div class="col-md-4">
+            <label class="form-label" for="proxyToggle">Proxy fallback (AllOrigins)</label>
+            <div class="input-group">
+              <div class="input-group-text">
+                <input class="form-check-input mt-0" type="checkbox" id="proxyToggle" checked>
+              </div>
+              <input class="form-control" id="proxyBase" value="https://api.allorigins.win/raw?url=" />
+            </div>
+            <div class="form-text muted">Proxy añade CORS y puede atravesar bloqueos, pero su latencia incluye hop extra.</div>
+          </div>
+
+          <div class="col-md-2">
             <label class="form-label" for="targetAvail">SLO: Availability %</label>
             <input type="number" min="90" max="100" step="0.001" class="form-control" id="targetAvail" value="99.9" />
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label" for="targetP95">SLO: p95 latency (ms)</label>
             <input type="number" min="1" step="1" class="form-control" id="targetP95" value="500" />
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label" for="windowSize">SLI window (samples)</label>
             <input type="number" min="10" step="10" class="form-control" id="windowSize" value="300" />
             <div class="form-text muted">e.g., 300 samples @ 5s ≈ 25 minutes rolling window.</div>
           </div>
-          <div class="col-md-3 text-end">
+          <div class="col-md-2 text-end">
             <button id="startBtn" type="button" class="btn btn-success me-2">Start</button>
             <button id="stopBtn" type="button" class="btn btn-outline-light me-2" disabled>Stop</button>
             <button id="resetBtn" type="button" class="btn btn-outline-warning">Reset</button>
@@ -141,8 +152,9 @@
       <div class="card-body">
         <div class="d-flex align-items-center justify-content-between mb-2">
           <h2 class="h6 m-0">Recent probes</h2>
-          <div>
-            <button id="exportCsv" class="btn btn-sm btn-outline-info me-2">Export CSV</button>
+          <div class="d-flex align-items-center gap-2">
+            <button id="presetStreamlit" class="btn btn-sm btn-outline-secondary">Preset: Streamlit</button>
+            <button id="exportCsv" class="btn btn-sm btn-outline-info">Export CSV</button>
             <span class="small-label">Window keeps last <span id="winSizeLabel">300</span> samples.</span>
           </div>
         </div>
@@ -254,67 +266,78 @@
       el.classList.toggle('blink', !!active);
     }
 
-    async function probeOnce() {
+    async function probeOnce() { (async () => {
       const base = (document.getElementById('targetUrl').value || '').trim();
       const path = (document.getElementById('healthPath').value || '/').trim();
-      const url = new URL(path, base).toString();
       const timeoutMs = parseInt(document.getElementById('timeoutMs').value, 10);
       const expectCors = document.getElementById('expectCors').checked;
+      const proxyOn = document.getElementById('proxyToggle').checked;
+      const proxyBase = (document.getElementById('proxyBase').value || '').trim();
 
-      const started = performance.now();
-      let done = false;
-      let ok = false; let latency = null; let note = '';
-      let mode = expectCors ? 'fetch' : 'img';
+      if (!base) { alert('Please enter a Target URL first'); return; }
 
-      const setLast = () => {
-        document.getElementById('lastProbeAt').textContent = new Date().toLocaleString();
-      };
+      let done = false; const startedAll = performance.now();
+      const setLast = () => { document.getElementById('lastProbeAt').textContent = new Date().toLocaleString(); };
 
-      const timeout = new Promise((resolve) => {
-        setTimeout(() => { if (!done) resolve({ ok:false, latency:null, note:'Timeout' }); }, timeoutMs);
-      });
+      const timeout = new Promise((resolve)=>{ setTimeout(()=>{ if(!done) resolve({ok:false, latency:null, note:'Timeout', mode:'timeout'}); }, timeoutMs); });
 
-      async function fetchMode() {
+      async function tryFetch(u) {
         try {
           const controller = new AbortController();
-          const t = setTimeout(() => controller.abort(), timeoutMs);
-          const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: controller.signal });
+          const t = setTimeout(()=>controller.abort(), timeoutMs);
+          const res = await fetch(u, { method:'GET', cache:'no-store', signal:controller.signal });
           clearTimeout(t);
-          const end = performance.now();
-          const lt = end - started;
-          const success = res.ok; // requires CORS to read
-          const n = `status=${res.status}`;
-          return { ok: success, latency: lt, note: n };
-        } catch (e) {
-          const end = performance.now();
-          return { ok:false, latency: end - started, note: (e.name || 'Error') };
-        }
+          return { ok: res.ok, note:`status=${res.status}` };
+        } catch(e){ return { ok:false, note:e.name||'Error' }; }
       }
 
-      function imgMode() {
+      function tryImg(u){
         return new Promise(resolve => {
           const img = new Image();
-          const t = setTimeout(() => { img.src = ''; resolve({ ok:false, latency:null, note:'Timeout' }); }, timeoutMs);
+          const t = setTimeout(()=>{ img.src=''; resolve({ ok:false, note:'img timeout' }); }, timeoutMs);
           const st = performance.now();
-          img.onload = () => { clearTimeout(t); resolve({ ok:true, latency: performance.now()-st, note:'img onload' }); };
-          img.onerror = () => { clearTimeout(t); resolve({ ok:false, latency: performance.now()-st, note:'img onerror' }); };
-          // cache-buster
-          img.src = url + (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+          img.onload = ()=>{ clearTimeout(t); resolve({ ok:true, latency: performance.now()-st, note:'img onload' }); };
+          img.onerror = ()=>{ clearTimeout(t); resolve({ ok:false, latency: performance.now()-st, note:'img onerror' }); };
+          img.src = u + (u.includes('?')?'&':'?') + '_t=' + Date.now();
         });
       }
 
-      const result = await Promise.race([ expectCors ? fetchMode() : imgMode(), timeout ]);
-      done = true;
-      ok = !!result.ok; latency = result.latency; note = result.note;
+      async function runStrategies(){
+        const candidates = [];
+        // Start with user path (fetch if CORS expected)
+        if (expectCors) candidates.push({ kind:'fetch', url: new URL(path, base).toString() });
+        // Common health endpoints
+        if (expectCors) candidates.push({ kind:'fetch', url: new URL('/health', base).toString() });
+        // Streamlit/Generic favicon fallbacks (image)
+        candidates.push({ kind:'fetch', url: new URL('/?format=html', base).toString() }); // custom fetch for Streamlit
+        candidates.push({ kind:'img', url: new URL('/favicon.png', base).toString() });
+        candidates.push({ kind:'img', url: new URL('/favicon.ico', base).toString() });
+        // Root as image (some servers serve a png landing)
+        candidates.push({ kind:'img', url: new URL('/', base).toString() });
+        // Proxy (adds CORS) for user path then root
+        if (proxyOn && proxyBase){
+          candidates.push({ kind:'proxy', url: proxyBase + encodeURIComponent(new URL(path, base).toString()) });
+          candidates.push({ kind:'proxy', url: proxyBase + encodeURIComponent(new URL('/', base).toString()) });
+        }
 
-      const sample = { ts: nowISO(), ok, latency, mode, note };
-      state.samples.push(sample);
-      addRow(sample);
-      trimWindow();
-      updateUI();
-      setLast();
-      setStatus(ok ? 'Healthy' : 'Unhealthy', false);
-    }
+        for (const c of candidates){
+          const st = performance.now();
+          let r;
+          if (c.kind==='fetch') r = await tryFetch(c.url);
+          else if (c.kind==='img') r = await tryImg(c.url);
+          else if (c.kind==='proxy') r = await tryFetch(c.url);
+          if (r.ok) return { ok:true, latency: performance.now()-st, note:`${c.kind} ok · ${r.note}`, mode:c.kind };
+          // record failed attempt as a note but keep going
+          lastAttempt = `${c.kind} fail · ${r.note}`;
+        }
+        return { ok:false, latency:null, note:lastAttempt||'All strategies failed', mode:'auto' };
+      }
+
+      const raced = await Promise.race([ runStrategies(), timeout ]);
+      done = true;
+      const sample = { ts: nowISO(), ok: !!raced.ok, latency: raced.latency!=null? raced.latency : (performance.now()-startedAll), mode: raced.mode, note: raced.note };
+      state.samples.push(sample); addRow(sample); trimWindow(); updateUI(); setLast(); setStatus(sample.ok ? 'Healthy' : 'Unhealthy', false);
+    })(); }
 
     function startProbing() {
       if (state.timer) return;
@@ -360,6 +383,14 @@
     document.getElementById('stopBtn').addEventListener('click', stopProbing);
     document.getElementById('resetBtn').addEventListener('click', resetAll);
     document.getElementById('exportCsv').addEventListener('click', exportCSV);
+    document.getElementById('presetStreamlit').addEventListener('click', ()=>{
+      const u = document.getElementById('targetUrl');
+      const h = document.getElementById('healthPath');
+      if (!u.value) u.value = 'http://<ElasticIP>/';
+      h.value = '/';
+      document.getElementById('expectCors').checked = false; // allow non-CORS first
+      document.getElementById('proxyToggle').checked = true; // keep proxy as last resort
+    });
 
     // Initialize
     setStatus('Idle', false);
