@@ -405,12 +405,7 @@
       document.getElementById('expectCors').checked = true; // prefer fetch real HTML on same origin/iframe
       document.getElementById('proxyToggle').checked = false; // avoid proxy unless manual
     });
-      const h = document.getElementById('healthPath');
-      if (!u.value) u.value = 'http://<ElasticIP>/';
-      h.value = '/';
-      document.getElementById('expectCors').checked = false; // allow non-CORS first
-      document.getElementById('proxyToggle').checked = false; // keep proxy as last resort
-    });
+
 
     // Initialize
     setStatus('Idle', false);
