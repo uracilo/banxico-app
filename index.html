@@ -59,6 +59,12 @@
             </div>
           </div>
 
+          <div class="col-md-6">
+            <label class="form-label" for="customFetches">Custom fetch paths (comma‑separated)</label>
+            <input class="form-control" id="customFetches" value="/?format=html, /" />
+            <div class="form-text muted">Se intentan en orden antes de otras estrategias. Ideal para Streamlit (root HTML).</div>
+          </div>
+
           <div class="col-md-4">
             <label class="form-label" for="proxyToggle">Proxy fallback (AllOrigins)</label>
             <div class="input-group">
@@ -304,20 +310,27 @@
 
       async function runStrategies(){
         const candidates = [];
-        // Start with user path (fetch if CORS expected)
+        // 0) Custom fetches from UI (Streamlit-friendly)
+        const custom = (document.getElementById('customFetches').value || '').split(',').map(s=>s.trim()).filter(Boolean);
+        for (const p of custom){ candidates.push({ kind:'fetch', url: new URL(p, base).toString() }); }
+        // 1) User path (fetch if CORS expected)
         if (expectCors) candidates.push({ kind:'fetch', url: new URL(path, base).toString() });
-        // Common health endpoints
-        if (expectCors) candidates.push({ kind:'fetch', url: new URL('/health', base).toString() });
-        // Streamlit/Generic favicon fallbacks (image)
-        candidates.push({ kind:'fetch', url: new URL('/?format=html', base).toString() }); // custom fetch for Streamlit
+        // 2) Common health endpoints
+        if (expectCors) {
+          candidates.push({ kind:'fetch', url: new URL('/healthz', base).toString() });
+          candidates.push({ kind:'fetch', url: new URL('/health', base).toString() });
+        }
+        // 3) Streamlit/Generic favicon fallbacks (image)
         candidates.push({ kind:'img', url: new URL('/favicon.png', base).toString() });
         candidates.push({ kind:'img', url: new URL('/favicon.ico', base).toString() });
-        // Root as image (some servers serve a png landing)
+        // 4) Root as image
         candidates.push({ kind:'img', url: new URL('/', base).toString() });
-        // Proxy (adds CORS) for user path then root
+        // 5) Proxy
         if (proxyOn && proxyBase){
-          candidates.push({ kind:'proxy', url: proxyBase + encodeURIComponent(new URL(path, base).toString()) });
-          candidates.push({ kind:'proxy', url: proxyBase + encodeURIComponent(new URL('/', base).toString()) });
+          // Use first successful custom path through proxy too
+          for (const p of (custom.length?custom:['/'])){
+            candidates.push({ kind:'proxy', url: proxyBase + encodeURIComponent(new URL(p, base).toString()) });
+          }
         }
 
         for (const c of candidates){
@@ -388,8 +401,15 @@
       const h = document.getElementById('healthPath');
       if (!u.value) u.value = 'http://<ElasticIP>/';
       h.value = '/';
+      document.getElementById('customFetches').value = '/?format=html, /';
+      document.getElementById('expectCors').checked = true; // prefer fetch real HTML on same origin/iframe
+      document.getElementById('proxyToggle').checked = false; // avoid proxy unless manual
+    });
+      const h = document.getElementById('healthPath');
+      if (!u.value) u.value = 'http://<ElasticIP>/';
+      h.value = '/';
       document.getElementById('expectCors').checked = false; // allow non-CORS first
-      document.getElementById('proxyToggle').checked = true; // keep proxy as last resort
+      document.getElementById('proxyToggle').checked = false; // keep proxy as last resort
     });
 
     // Initialize
