@@ -1,22 +1,22 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >
-  Banxico App simple deployment in a public subnet with EC2 and Elastic IP.
+Description: Banxico App in public subnet + EC2 + EIP (Docker+Compose ya en la AMI).
 
 Parameters:
   AmiId:
     Type: String
-    Description: ID de la AMI personalizada (ej: ami-0abcd1234efgh5678)
   InstanceType:
     Type: String
     Default: t3.micro
-    AllowedValues:
-      - t3.micro
-      - t3.small
-      - t3.medium
-    Description: Tipo de instancia EC2
+    AllowedValues: [t3.micro, t3.small, t3.medium]
   KeyPair:
     Type: AWS::EC2::KeyPair::KeyName
-    Description: Nombre del par de llaves EC2 para SSH
+  SSHCidr:
+    Type: String
+    Default: 0.0.0.0/0
+  AppDir:
+    Type: String
+    Default: /opt/banxico
+    Description: Ruta del repo con docker-compose.yml en la AMI
 
 Resources:
   VPC:
@@ -25,16 +25,12 @@ Resources:
       CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: banxico-vpc
+      Tags: [{ Key: Name, Value: banxico-vpc }]
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
-      Tags:
-        - Key: Name
-          Value: banxico-igw
+      Tags: [{ Key: Name, Value: banxico-igw }]
 
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -49,14 +45,13 @@ Resources:
       CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true
       AvailabilityZone: !Select [ 0, !GetAZs '' ]
-      Tags:
-        - Key: Name
-          Value: banxico-public-subnet
+      Tags: [{ Key: Name, Value: banxico-public-subnet }]
 
   RouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
+      Tags: [{ Key: Name, Value: banxico-rt }]
 
   Route:
     Type: AWS::EC2::Route
@@ -75,45 +70,68 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow access to app on 8501 and SSH
+      GroupDescription: Allow HTTP(80) and SSH
       VpcId: !Ref VPC
       SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8501
-          ToPort: 8501
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: banxico-sg
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+        - { IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref SSHCidr }
+      Tags: [{ Key: Name, Value: banxico-sg }]
 
-Instance:
-  Type: AWS::EC2::Instance
-  Properties:
-    ImageId: !Ref AmiId
-    InstanceType: !Ref InstanceType
-    KeyName: !Ref KeyPair
-    SubnetId: !Ref PublicSubnet
-    SecurityGroupIds:
-      - !Ref SecurityGroup
-    Tags:
-      - Key: Name
-        Value: banxico-app
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPair
+      SubnetId: !Ref PublicSubnet         # <- usa PublicSubnet definido arriba
+      SecurityGroupIds: [!Ref SecurityGroup]
+      IamInstanceProfile: !Ref InstanceProfile
+      Tags: [{ Key: Name, Value: banxico-app }]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          cd "${AppDir}"
+          /usr/bin/docker compose pull || true
+          /usr/bin/docker compose up -d
+          sleep 3
+          /usr/bin/docker compose ps || true
+          cd /home/ubuntu/actions-runner
+          sudo ./svc.sh start
 
   ElasticIP:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
       InstanceId: !Ref Instance
 
 Outputs:
   AppPublicIP:
-    Description: Public IP to access the app
+    Description: Public IP
     Value: !Ref ElasticIP
   AppURL:
-    Description: URL de acceso
-    Value: !Sub "http://${ElasticIP}:8501"
+    Description: URL de acceso (HTTP 80)
+    Value: !Sub "http://${ElasticIP}/"
